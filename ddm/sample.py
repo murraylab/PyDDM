@@ -7,7 +7,7 @@
 import numpy as np
 import itertools
 
-from paranoid.types import NDArray, Number, List, String, Self, Positive, Positive0, Range, Natural0, Unchecked, Dict, Maybe, Nothing
+from paranoid.types import NDArray, Number, List, String, Self, Positive, Positive0, Range, Natural0, Unchecked, Dict, Maybe, Nothing, Boolean
 from paranoid.decorators import *
 from .models.paranoid_types import Conditions
 
@@ -49,8 +49,8 @@ class Sample(object):
         # Most testing is done in the constructor and the data is read
         # only, so this isn't strictly necessary
         assert type(v) is cls
-        assert v.corr in NDArray(d=1, t=Number), "sample_corr not a numpy array, it is " + str(type(v.corr))
-        assert v.err in NDArray(d=1, t=Number), "sample_err not a numpy array, it is " + str(type(v.err))
+        assert v.corr in NDArray(d=1, t=Positive0), "sample_corr not a numpy array with elements greater than 0, it is " + str(type(v.corr))
+        assert v.err in NDArray(d=1, t=Positive0), "sample_err not a numpy array with elements greater than 0, it is " + str(type(v.err))
         assert v.undecided in Natural0(), "undecided not a natural number"
         for k,val in v.conditions.items():
             # Make sure shape and type are correct
@@ -204,24 +204,32 @@ class Sample(object):
         nc = (1-df[correct_column_name]).astype(bool)
         def pt(x): # Pythonic types
             arr = np.asarray(x)
-            if np.all(arr == np.round(arr)):
+            # Need to use the (slow) array operation here because of a bug in
+            # numpy.isreal for strings.
+            if np.all([np.isreal(a) for a in arr]) and np.all(arr == np.round(arr)):
                 arr = arr.astype(np.int64)
             return arr
 
         column_names = [e for e in df.columns if not e in [rt_column_name, correct_column_name]]
         conditions = {k: (pt(df[c][k]), pt(df[nc][k]), np.asarray([])) for k in column_names}
         return Sample(pt(df[c][rt_column_name]), pt(df[nc][rt_column_name]), 0, **conditions)
-    @accepts(Self, String, String)
-    @requires("self.undecided == 0") # No undecided trials for this method
-    def to_pandas_dataframe(self, rt_column_name='RT', correct_column_name='correct'):
+    def to_pandas_dataframe(self, rt_column_name='RT', correct_column_name='correct', drop_undecided=False):
         """Convert the sample to a Pandas dataframe.
 
         `correct_column_name` is the column label for the response
         time, and `rt_column_name` is the column label for whether a
         trial is correct or incorrect.
+
+        Because undecided trials do not have an RT or correct/error, they are
+        cannot be added to the data frame.  To ignore them, thereby creating a
+        dataframe which is smaller than the sample, set `drop_undecided` to
+        True.
+
         """
         import pandas
         all_trials = []
+        if self.undecided != 0 and drop_undecided is False:
+            raise ValueError("The sample object has undecided trials.  These do not have an RT or a P(correct), so they cannot be converted to a data frame.  Please use the 'drop_undecided' flag when calling this function.")
         conditions = list(self.condition_names())
         columns = [correct_column_name, rt_column_name] + conditions
         for trial in self.items(correct=True):
@@ -331,14 +339,14 @@ class Sample(object):
         if required_conditions is not None:
             names = [n for n in names if n in required_conditions]
         for c in names:
-            conditions.append(list(set(cs[c][0]).union(set(cs[c][1]))))
-        combs = []
-        for p in itertools.product(*conditions):
-            if len(self.subset(**dict(zip(names, p)))) != 0:
-                combs.append(dict(zip(names, p)))
+            undecided = cs[c][2] if len(cs[c]) == 3 else np.asarray([])
+            joined = np.concatenate([cs[c][0], cs[c][1], undecided])
+            conditions.append(joined)
+        alljoined = list(zip(*conditions))
+        combs = list(set(alljoined))
         if len(combs) == 0: # Generally not needed since iterools.product does this
             return [{}]
-        return combs
+        return [dict(zip(names, c)) for c in combs]
 
     @staticmethod
     @accepts(dt=Positive, T_dur=Positive)

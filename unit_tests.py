@@ -151,6 +151,14 @@ class TestDependences(TestCase):
         ic = icrange.get_IC(x=np.arange(-.48, .48001, .02), dx=.02)
         assert np.all(np.isclose(ic, ic[::-1]))
         assert len(set(ic)) == 2
+    def test_ICGaussian(self):
+        """Gaussian distribution of starting conditions centered at 0"""
+        # Make sure it integrates to 1
+        icgauss1 = ddm.models.ICGaussian(stdev=.1)
+        icgauss2 = ddm.models.ICGaussian(stdev=.9)
+        params = dict(x=np.arange(-1, 1.0001, .01), dx=.01)
+        assert np.all(np.isclose(np.sum(icgauss1.get_IC(**params)), 1))
+        assert np.all(np.isclose(np.sum(icgauss2.get_IC(**params)), 1))
     def test_OverlayNone(self):
         """No overlay"""
         s = ddm.Model().solve()
@@ -355,6 +363,9 @@ class TestSample(TestCase):
             # Sample with conditions
             "conds": ddm.Sample(aa([1, 2, 3]), aa([]), 0,
                                 cond1=(aa([1, 1, 2]), aa([]))),
+            # Sample with conditions as strings
+            "condsstr": ddm.Sample(aa([1, 2, 3]), aa([]), 0,
+                                cond1=(aa(["x", "yy", "z z z"]), aa([]))),
             # Sample with conditions and explicitly showing undecided
             "condsexp": ddm.Sample(aa([1, 2, 3]), aa([]), 0,
                                    cond1=(aa([1, 1, 2]), aa([]), aa([]))),
@@ -403,21 +414,28 @@ class TestSample(TestCase):
         assert self.samps["two"].condition_values("condb") == [1, 2]
     def test_condition_combinations(self):
         """Condition combinations are a cartesian product of condition values"""
+        def identical_conditions(c1, c2):
+            for cond in c1:
+                if cond not in c2:
+                    return False
+            for cond in c2:
+                if cond not in c1:
+                    return False
+            return True
         # If we want nothing
         assert self.samps["conds"].condition_combinations([]) == [{}]
         # If nothing matches
         assert self.samps["conds"].condition_combinations(["xyz"]) == [{}]
         # If we want everything
-        assert self.samps["conds"].condition_combinations(None) == [{"cond1": 1}, {"cond1": 2}]
+        assert identical_conditions(self.samps["conds"].condition_combinations(None), [{"cond1": 1}, {"cond1": 2}])
         # Limit to one condition
-        assert self.samps["conds"].condition_combinations(["cond1"]) == [{"cond1": 1}, {"cond1": 2}]
+        assert identical_conditions(self.samps["conds"].condition_combinations(["cond1"]), [{"cond1": 1}, {"cond1": 2}])
         # More conditions
         conds_two = self.samps["two"].condition_combinations()
         exp_conds_two = [{"conda": "a", "condb": 1},
                          {"conda": "b", "condb": 2},
                          {"conda": "a", "condb": 2}]
-        assert all(a in exp_conds_two for a in conds_two)
-        assert all(a in conds_two for a in exp_conds_two)
+        assert identical_conditions(conds_two, exp_conds_two)
     def test_pdfs(self):
         """Produce valid distributions which sum to one"""
         dt = .02
@@ -443,10 +461,13 @@ class TestSample(TestCase):
         # Create a list to make sure we don't iterate past the end
         list(self.samps["conds"].items(correct=True))
         list(self.samps["conds"].items(correct=False))
+        list(self.samps["condsstr"].items(correct=True))
+        list(self.samps["condsstr"].items(correct=False))
     def test_subset(self):
         """Filter a sample by some conditions"""
         # Basic access
         assert len(self.samps['conds'].subset(cond1=2)) == 1
+        assert len(self.samps['condsstr'].subset(cond1="z z z")) == 1
         # The elements being accessed
         assert list(self.samps['conds'].subset(cond1=1).corr) == [1, 2]
         # An empty subset with two conditions
@@ -474,10 +495,14 @@ class TestSample(TestCase):
         cond_df = pandas.DataFrame({'c': [1, 1, 1], 'rt': [1, 2, 3], 'cond1': [1, 1, 2]})
         assert ddm.Sample.from_pandas_dataframe(cond_df, 'rt', 'c') == self.samps['conds']
         assert ddm.Sample.from_pandas_dataframe(cond_df, correct_column_name='c', rt_column_name='rt') == self.samps['condsexp']
+        condsstr_df = pandas.DataFrame({'c': [1, 1, 1], 'rt': [1, 2, 3], 'cond1': ["x", "yy", "z z z"]})
+        assert ddm.Sample.from_pandas_dataframe(condsstr_df, 'rt', 'c') == self.samps['condsstr']
     def test_to_pandas(self):
         for _,s in self.samps.items():
             if s.undecided == 0:
                 assert s == ddm.Sample.from_pandas_dataframe(s.to_pandas_dataframe("a", "b"), "a", "b")
+            else:
+                assert len(s.corr)+len(s.err) == len(s.to_pandas_dataframe("a", "b", drop_undecided=True))
 
 class TestSolution(TestCase):
     def setUp(self):

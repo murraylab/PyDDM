@@ -182,6 +182,12 @@ class Solution(object):
         If no overlays are in the model, then 
         sum(pdf_corr()[0:t]*dt) + sum(pdf_err()[0:t]*dt) + sum(pdf_evolution()[:,t]*dx)
         should always equal 1 (plus or minus floating point errors).
+
+        Note that this function will fail if the solution was not generated to
+        contain information about the evolution of the pdf.  This is not
+        enabled by default, as it causes substantial memory overhead.  To
+        enable this, see the documentation for the Model.solve() argument
+        "return_pdf", which should be set to True.
         """
         # Do this here to avoid import recursion
         from .models.overlay import OverlayNone
@@ -313,17 +319,16 @@ class Solution(object):
         combined_probs = list(shorter_pdf_corr*self.model.dt) + list(shorter_pdf_err*self.model.dt) + [self.prob_undecided()]
         if fsum(combined_probs) != 1:
             print("Warning, distribution sums to %f rather than 1" % fsum(combined_probs))
-        # Each point x on the pdf represents the space from x to x+dt.
-        # So sample and then add uniform noise to each element.
         samp = np.random.choice(combined_domain, p=combined_probs, replace=True, size=k)
-        samp += np.random.uniform(0, self.model.dt, k)
-        
-        aa = np.asarray
         undecided = np.sum(samp==-1)
         samp = samp[samp != -1] # Remove undecided trials
+        # Each point x on the pdf represents the space from x to x+dt.
+        # So sample and then add uniform noise to each element.
+        samp += np.random.uniform(0, self.model.dt, len(samp))
         # Find correct and error trials
         corr_sample = samp[samp<shift]
         err_sample = samp[samp>=shift]-shift
         # Build Sample object
+        aa = np.asarray
         conditions = {k : (aa([v]*len(corr_sample)), aa([v]*len(err_sample)), aa([v]*int(undecided))) for k,v in self.conditions.items()}
         return Sample(corr_sample, err_sample, undecided, **conditions)
